@@ -1190,10 +1190,26 @@ function importCSV(input){
       const [date, amountStr, desc, clientName]=cols;
       const amount=parseFloat(amountStr);
 
-      // Validate
+      // Validate basics
       if(!date||isNaN(amount)||amount<=0||!clientName){errors++;return;}
-      // Validate date format loosely
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){errors++;return;}
+
+      // Normalize date to YYYY-MM-DD — accept many common formats
+      const normalizeDate=function(raw){
+        raw=raw.trim().replace(/^"|"$/g,'');
+        // Already YYYY-MM-DD
+        if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+        // Try parsing as a JS date (handles M/D/YYYY, Month D YYYY, etc.)
+        const parsed=new Date(raw);
+        if(!isNaN(parsed.getTime())){
+          const y=parsed.getFullYear();
+          const m=String(parsed.getMonth()+1).padStart(2,'0');
+          const d=String(parsed.getDate()).padStart(2,'0');
+          return `${y}-${m}-${d}`;
+        }
+        return null;
+      };
+      const normalizedDate=normalizeDate(date);
+      if(!normalizedDate){errors++;return;}
 
       // Find or create the source
       let stream=d.streams.find(s=>s.name.toLowerCase()===clientName.toLowerCase());
@@ -1207,7 +1223,7 @@ function importCSV(input){
       // Duplicate check: same date + amount + desc + client
       const cleanDesc=(desc||'Payment').replace(/^"|"$/g,'');
       const isDuplicate=d.entries.some(ex=>
-        ex.date===date &&
+        ex.date===normalizedDate &&
         ex.amount===amount &&
         (ex.desc||'Payment')===cleanDesc &&
         ex.streamId===stream.id
@@ -1217,7 +1233,7 @@ function importCSV(input){
 
       d.entries.push({
         id:'e_'+Date.now()+'_'+Math.random().toString(36).slice(2),
-        amount, desc:cleanDesc, streamId:stream.id, date
+        amount, desc:cleanDesc, streamId:stream.id, date:normalizedDate
       });
       imported++;
     });
