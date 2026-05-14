@@ -631,11 +631,21 @@
 <div id="viewSources" style="display:none">
   <div class="section-title">All-Time Rankings</div>
   <div class="manage-list" id="manageList"></div>
-  <div style="padding:12px 20px 0">
+  <div style="padding:12px 20px 0;display:flex;flex-direction:column;gap:10px">
     <button class="submit-btn" onclick="exportCSV()"
       style="background:var(--sand);color:var(--forest);border:2px solid var(--border);">
       ↓ Export All Payments as CSV
     </button>
+    <button class="submit-btn" onclick="document.getElementById('csvFileInput').click()"
+      style="background:var(--sand);color:var(--forest);border:2px solid var(--border);">
+      ↑ Import Payments from CSV
+    </button>
+    <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="importCSV(this)" />
+    <p style="font-size:11px;color:var(--muted);text-align:center;line-height:1.6;padding:0 4px">
+      CSV must have 4 columns in this order:<br>
+      <strong style="color:var(--text)">Date, Amount, Description, Client</strong><br>
+      Duplicates are skipped automatically.
+    </p>
   </div>
 </div>
 
@@ -1147,6 +1157,84 @@ function exportCSV(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=`income-${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(url);
   showToast(`Exported ${sorted.length} payments`);
+}
+
+function importCSV(input){
+  const file=input.files[0];
+  if(!file){return;}
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const text=e.target.result;
+    const lines=text.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+    if(lines.length<2){showToast('CSV appears empty');input.value='';return;}
+
+    // Skip header row
+    const rows=lines.slice(1);
+    const d=getData();
+    let imported=0, skipped=0, errors=0;
+
+    rows.forEach(line=>{
+      // Handle quoted fields (e.g. "description with, comma")
+      const cols=[];
+      let current='', inQuotes=false;
+      for(let i=0;i<line.length;i++){
+        const ch=line[i];
+        if(ch==='"'){inQuotes=!inQuotes;}
+        else if(ch===','&&!inQuotes){cols.push(current.trim());current='';}
+        else{current+=ch;}
+      }
+      cols.push(current.trim());
+
+      if(cols.length<4){errors++;return;}
+
+      const [date, amountStr, desc, clientName]=cols;
+      const amount=parseFloat(amountStr);
+
+      // Validate
+      if(!date||isNaN(amount)||amount<=0||!clientName){errors++;return;}
+      // Validate date format loosely
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){errors++;return;}
+
+      // Find or create the source
+      let stream=d.streams.find(s=>s.name.toLowerCase()===clientName.toLowerCase());
+      if(!stream){
+        const colors=['#E8A045','#C4832A','#3A7D5C','#6B7A99','#D64C3F','#8B6914','#5B8A6B','#2A4170'];
+        const color=colors[d.streams.length%colors.length];
+        stream={id:'s_'+Date.now()+'_'+Math.random().toString(36).slice(2),name:clientName,color};
+        d.streams.push(stream);
+      }
+
+      // Duplicate check: same date + amount + desc + client
+      const cleanDesc=(desc||'Payment').replace(/^"|"$/g,'');
+      const isDuplicate=d.entries.some(ex=>
+        ex.date===date &&
+        ex.amount===amount &&
+        (ex.desc||'Payment')===cleanDesc &&
+        ex.streamId===stream.id
+      );
+
+      if(isDuplicate){skipped++;return;}
+
+      d.entries.push({
+        id:'e_'+Date.now()+'_'+Math.random().toString(36).slice(2),
+        amount, desc:cleanDesc, streamId:stream.id, date
+      });
+      imported++;
+    });
+
+    saveData(d);
+    input.value=''; // reset so same file can be re-imported if needed
+    render();
+
+    if(imported>0) setTab('payments');
+    const parts=[];
+    if(imported>0) parts.push(`${imported} imported`);
+    if(skipped>0)  parts.push(`${skipped} skipped`);
+    if(errors>0)   parts.push(`${errors} invalid`);
+    showToast(parts.join(' · ') || 'Nothing to import');
+  };
+  reader.onerror=function(){showToast('Could not read file');input.value='';};
+  reader.readAsText(file);
 }
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')['addModal','goalModal'].forEach(closeModal);});
